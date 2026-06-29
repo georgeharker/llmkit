@@ -1,0 +1,34 @@
+[project]
+name = "llmkit"
+version = "0.1.0"
+description = "Streaming LLM bridge + markdown rendering toolkit for terminal apps."
+requires-python = ">=3.11"  # tomllib (bridge.config) is stdlib only from 3.11
+# Base install pulls nothing — pick the subpackage(s) you need via extras.
+# This keeps the two subpackages' dependency graphs disjoint: `md` never
+# drags in openai, `bridge` never drags in rich/textual.
+dependencies = []
+
+[project.optional-dependencies]
+# llmkit.bridge — OpenAI-compatible streaming chat/complete bridge.
+bridge = ["openai>=1.0"]
+# Optional claude_code adapter (Claude Agent SDK, routed through the
+# `claude` CLI's auth). Imported lazily so the openai path never needs it.
+claude = ["claude-agent-sdk>=0.2"]
+# llmkit.md — markdown rendering (one-shot + live stream + scrollable modal).
+# markdown-it-py is a direct import in md.render.stream (textual also pulls
+# it, but we depend on it explicitly since we use it ourselves).
+md = ["rich>=13.0", "textual>=0.50", "markdown-it-py>=3.0"]
+
+[build-system]
+requires = ["uv_build>=0.5"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "llmkit"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
