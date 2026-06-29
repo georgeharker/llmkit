@@ -1,43 +1,39 @@
 # llmkit
 
-A streaming LLM bridge + markdown rendering toolkit for terminal apps.
-Extracted from [zsh-ai](https://github.com/) — nothing here knows about
-any host shell. Two independent subpackages with disjoint dependencies:
+A streaming LLM bridge + terminal markdown renderer, in two independent
+subpackages with disjoint dependencies. Nothing here knows about any host
+shell — it's plain argv/stdin in, streamed bytes out, with a dataclass API
+underneath. Extracted from [zsh-ai](https://github.com/georgeharker/zsh-ai).
 
 | Subpackage | What | Install |
 |---|---|---|
 | `llmkit.bridge` | Streaming chat/complete over an OpenAI-compatible endpoint (or the Claude Agent SDK), with a reasoning/content stream splitter, output sinks, and a typed provider/profile config parser. | `llmkit[bridge]` (+`[claude]`) |
 | `llmkit.md` | Render markdown to a terminal: one-shot, live streaming (rich), or a scrollable modal (textual). | `llmkit[md]` |
 
-## Config (`llmkit.bridge.config`)
-
-Typed and extensible. Three generic tables — `[defaults]`, `[providers.*]`,
-`[profiles.*]` — parse into dataclasses. Profiles map *opaque* selector
-keys to provider names; the library never interprets the keys, so a
-consumer gives them meaning (e.g. zsh-ai's ask/modify/question/fim
-"widgets"). Extend by subclassing the parser, not by stuffing untyped
-values into a bag:
+## Bridge
 
 ```python
-from llmkit.bridge.config import Config, ConfigParser, Provider
+from llmkit.bridge import Provider, ChatRequest, chat
 
-@dataclass(frozen=True)
-class MyProvider(Provider):
-    ...                       # extra typed fields
-
-class MyParser(ConfigParser[MyProvider]):
-    provider_cls = MyProvider
-    def build(self, defaults, providers, profiles, data):
-        return MyConfig(defaults, providers, profiles, ...)  # extra typed sections
+chat(Provider(model="qwen2.5-coder:7b", endpoint="http://localhost:11434/v1"),
+     ChatRequest(user="explain mmap in one line"),
+     content="-", thinking="inline")
 ```
 
-The parser's return type tracks your subclass — no `Any`. The only
-escape hatch for unknown *keys* is `Provider.extra`, typed as the closed
-`TomlValue` union (TOML's value grammar).
+Or as a CLI: `python -m llmkit.bridge chat --model … --user "…"`.
 
-## Markdown (`llmkit.md`)
+The reusable surface is the dataclass API; the flag CLI is one adapter over
+it. Config is typed and extensible — `[defaults]` / `[providers.*]` /
+`[profiles.*]` parse into dataclasses, and you extend the schema by
+subclassing `ConfigParser`/`Config` (the return type tracks your subclass,
+no `Any`). Profile keys are opaque, so a consumer assigns their meaning.
+
+## Markdown
 
 ```sh
-python -m llmkit.md.render --stream < stream.md     # live re-render to stdout
-python -m llmkit.md.view  -                          # scrollable modal, follows stdin
+python -m llmkit.md.render --stream < stream.md   # live re-render to stdout
+python -m llmkit.md.view  -                        # scrollable modal, follows stdin
 ```
+
+`LiveMarkdownStream` mirrors textual's `Markdown.get_stream` API, so the same
+code drives a rich `Console` or a textual widget.
