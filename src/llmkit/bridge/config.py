@@ -93,7 +93,8 @@ class Provider:
     """
 
     model: Optional[str] = None
-    adapter: Optional[str] = None  # "openai-compatible" | "claude_code"
+    # "openai-compatible" | "anthropic" | "google" | "claude_code"
+    adapter: Optional[str] = None
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
     api_key_env: Optional[str] = None

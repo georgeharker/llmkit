@@ -11,9 +11,12 @@ dependencies = []
 [project.optional-dependencies]
 # llmkit.bridge — OpenAI-compatible streaming chat/complete bridge.
 bridge = ["openai>=1.0"]
-# Optional claude_code adapter (Claude Agent SDK, routed through the
-# `claude` CLI's auth). Imported lazily so the openai path never needs it.
-claude = ["claude-agent-sdk>=0.2"]
+# Optional native-protocol adapters. Each is imported lazily so the default
+# openai-compatible path never needs them. Point a provider's endpoint at a
+# gateway (e.g. OpenCode Zen) to route the native protocol through it.
+claude = ["claude-agent-sdk>=0.2"]  # claude_code adapter (Claude Agent SDK)
+anthropic = ["anthropic>=0.40"]  # anthropic adapter (native Messages API)
+google = ["google-genai>=1.0"]  # google adapter (native Gemini API)
 # llmkit.md — markdown rendering (one-shot + live stream + scrollable modal).
 # markdown-it-py is a direct import in md.render.stream (textual also pulls
 # it, but we depend on it explicitly since we use it ourselves).

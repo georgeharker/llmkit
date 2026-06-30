@@ -35,11 +35,13 @@ def _add_common(s: argparse.ArgumentParser) -> None:
     s.add_argument("--api-key-env", default="")
     s.add_argument(
         "--adapter",
-        choices=["openai-compatible", "claude_code"],
+        choices=["openai-compatible", "claude_code", "anthropic", "google"],
         default=os.environ.get("LLMKIT_ADAPTER", "openai-compatible"),
-        help="transport backend: openai-compatible (HTTP endpoint, default) "
-        "or claude_code (Claude Agent SDK; chat only). complete/FIM is "
-        "openai-compatible-only.",
+        help="transport backend: openai-compatible (HTTP endpoint, default), "
+        "anthropic (native Messages API), google (native Gemini API), or "
+        "claude_code (Claude Agent SDK; chat only). Point --endpoint at a "
+        "gateway (e.g. OpenCode Zen) to route a native protocol through it. "
+        "complete/FIM is openai-compatible-only.",
     )
 
 
@@ -60,7 +62,8 @@ def _provider_from_args(args: argparse.Namespace) -> Provider:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="llmkit",
-        description="Streaming LLM bridge (openai-compatible / claude_code).",
+        description="Streaming LLM bridge "
+        "(openai-compatible / anthropic / google / claude_code).",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 

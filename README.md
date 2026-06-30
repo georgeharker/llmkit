@@ -7,7 +7,7 @@ underneath. Extracted from [zsh-ai](https://github.com/georgeharker/zsh-ai).
 
 | Subpackage | What | Install |
 |---|---|---|
-| `llmkit.bridge` | Streaming chat/complete over an OpenAI-compatible endpoint (or the Claude Agent SDK), with a reasoning/content stream splitter, output sinks, and a typed provider/profile config parser. | `llmkit[bridge]` (+`[claude]`) |
+| `llmkit.bridge` | Streaming chat/complete over an OpenAI-compatible endpoint — or natively over the Anthropic Messages API / Google Gemini API / Claude Agent SDK — with a reasoning/content stream splitter, output sinks, and a typed provider/profile config parser. | `llmkit[bridge]` (+`[anthropic]`/`[google]`/`[claude]`) |
 | `llmkit.md` | Render markdown to a terminal: one-shot, live streaming (rich), or a scrollable modal (textual). | `llmkit[md]` |
 
 ## Bridge
@@ -21,6 +21,17 @@ chat(Provider(model="qwen2.5-coder:7b", endpoint="http://localhost:11434/v1"),
 ```
 
 Or as a CLI: `python -m llmkit.bridge chat --model … --user "…"`.
+
+Pick a backend with `adapter` / `--adapter`: `openai-compatible` (default),
+`anthropic`, `google`, or `claude_code`. The native HTTP adapters honour the
+provider's `endpoint` + `api_key`, so pointing one at a gateway (e.g. an
+[OpenCode Zen](https://opencode.ai/docs/zen/) base URL) routes that protocol
+through it. Anthropic's current models govern sampling internally, so the
+`anthropic` adapter doesn't forward `temperature`; Gemini accepts it, so
+`google` does. `complete` (FIM) is `openai-compatible`-only, and that's
+queryable up front — `adapter_supports_complete` / `provider_supports_complete`
+/ `profile_supports_complete` let a consumer disable a FIM widget for a
+chat-only provider or profile instead of failing at call time.
 
 The reusable surface is the dataclass API; the flag CLI is one adapter over
 it. Config is typed and extensible — `[defaults]` / `[providers.*]` /
