@@ -116,7 +116,22 @@ def stream_anthropic(
     )
     if request.system:
         create["system"] = request.system
-    create["thinking"] = _thinking_config(provider.enable_thinking)
+    # Structured output → a single forced tool whose input_schema IS the caller's
+    # schema; the model must fill it. Its ``input_json_delta`` stream is routed to
+    # the content sink, so downstream capture (chat_to_str/chat_structured) sees the
+    # conformant JSON where free-form text would otherwise be. Forced tool-use and
+    # extended thinking are mutually exclusive, so thinking is disabled here.
+    structured = request.schema is not None
+    if structured:
+        create["tools"] = [{
+            "name": request.schema_name,
+            "description": request.schema_description or "Return the result.",
+            "input_schema": request.schema,
+        }]
+        create["tool_choice"] = {"type": "tool", "name": request.schema_name}
+        create["thinking"] = {"type": "disabled"}
+    else:
+        create["thinking"] = _thinking_config(provider.enable_thinking)
 
     with client.messages.stream(**create) as stream:
         for event in stream:
@@ -129,5 +144,7 @@ def stream_anthropic(
             dt = getattr(delta, "type", None)
             if dt == "text_delta":
                 emitter.feed_content(getattr(delta, "text", "") or "")
+            elif dt == "input_json_delta":   # forced-tool structured output
+                emitter.feed_content(getattr(delta, "partial_json", "") or "")
             elif dt == "thinking_delta":
                 emitter.feed_reasoning(getattr(delta, "thinking", "") or "")

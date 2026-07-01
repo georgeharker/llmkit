@@ -20,6 +20,8 @@ from .bridge import (
     CompleteRequest,
     adapter_supports_complete,
     chat,
+    chat_structured,
+    chat_to_str,
     complete,
     profile_supports_complete,
     provider_supports_complete,
@@ -38,6 +40,8 @@ __all__ = [
     "ChatRequest",
     "CompleteRequest",
     "chat",
+    "chat_to_str",
+    "chat_structured",
     "complete",
     "with_defaults",
     # adapter capabilities (queryable up front)

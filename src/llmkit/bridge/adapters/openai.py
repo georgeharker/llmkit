@@ -31,6 +31,15 @@ def stream_openai(provider: Provider, request: ChatRequest, emitter: _Emitter) -
     extra = enable_thinking_extra(provider.enable_thinking)
     if extra:
         kwargs["extra_body"] = extra
+    # Structured output → constrain decoding to the caller's JSON Schema; the
+    # filled JSON streams as ordinary content (feed_content below), so capture is
+    # unchanged. Thinking is dropped when structured (mirrors the anthropic path).
+    if request.schema is not None:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": request.schema_name, "schema": request.schema},
+        }
+        kwargs.pop("extra_body", None)
     kwargs["stream"] = True
 
     for chunk in client.chat.completions.create(**kwargs):

@@ -16,10 +16,11 @@ failure semantics. ``complete`` (FIM) remains ``openai-compatible``-only.
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
 import sys
 from dataclasses import dataclass
-from typing import Callable, Optional, TextIO
+from typing import Any, Callable, Optional, TextIO
 
 from .client import build_client
 from .config import Config, Provider
@@ -71,11 +72,23 @@ def profile_supports_complete(config: Config[Provider], profile: str, key: str) 
 @dataclass
 class ChatRequest:
     """A single chat turn. ``enable_thinking`` (auto|true|false), if set,
-    overrides the provider's configured value for this call."""
+    overrides the provider's configured value for this call.
+
+    ``schema`` requests *structured output*: a JSON Schema the model must fill.
+    Adapters enforce it natively — anthropic via a forced ``tool_use`` (the tool
+    input streams as content), openai-compatible via ``response_format`` — and
+    the filled JSON is what lands in the content sink, so a caller gets a
+    conformant object instead of parsing free-form prose. ``schema_name`` /
+    ``schema_description`` label the tool for the model. Thinking is forced off
+    when a schema is set (forced tool-use and extended thinking don't combine).
+    """
 
     user: str
     system: Optional[str] = None
     enable_thinking: Optional[str] = None
+    schema: Optional[dict] = None
+    schema_name: str = "emit"
+    schema_description: str = ""
 
 
 @dataclass
@@ -171,7 +184,7 @@ Producer = Callable[[Provider, ChatRequest, _Emitter], None]
 def _run_chat(
     provider: Provider,
     request: ChatRequest,
-    content: str,
+    content: str | TextIO,
     thinking: str,
     status_file: str,
     producer: Producer,
@@ -224,13 +237,15 @@ def chat(
     provider: Provider,
     request: ChatRequest,
     *,
-    content: str = "-",
+    content: str | TextIO = "-",
     thinking: str = "none",
     status_file: str = "",
 ) -> int:
     """Run one chat turn. ``content`` / ``thinking`` are sink specs (``-``,
-    a path, ``none``, or — for thinking — ``inline``); ``status_file`` is an
-    optional file/fifo path for ``streaming``/``complete``/``error`` events.
+    a path, ``none``, or — for thinking — ``inline``); ``content`` may also be an
+    already-open writable stream for in-process capture (see :func:`chat_to_str`).
+    ``status_file`` is an optional file/fifo path for
+    ``streaming``/``complete``/``error`` events.
 
     Adapter is chosen from ``provider.adapter``. The request's
     ``enable_thinking`` overrides the provider's configured value."""
@@ -258,6 +273,52 @@ def chat(
 
         producer = stream_openai
     return _run_chat(provider, request, content, thinking, status_file, producer)
+
+
+class _StrSink(io.StringIO):
+    """A ``StringIO`` whose ``close()`` is a no-op, so ``_run_chat``'s
+    finally-block close leaves the buffer readable — :func:`chat_to_str` reads
+    ``getvalue()`` after the run returns."""
+
+    def close(self) -> None:  # noqa: D401 — intentional no-op
+        pass
+
+
+def chat_to_str(
+    provider: Provider,
+    request: ChatRequest,
+    *,
+    thinking: str = "none",
+    status_file: str = "",
+) -> tuple[int, str]:
+    """Run one chat turn and return ``(exit_code, content)`` in-process — the
+    content stream is captured to a string, no temp file. Failure semantics match
+    :func:`chat` (non-zero code on error); the partial content captured so far is
+    still returned."""
+    sink = _StrSink()
+    code = chat(provider, request, content=sink, thinking=thinking, status_file=status_file)
+    return code, sink.getvalue()
+
+
+def chat_structured(
+    provider: Provider,
+    request: ChatRequest,
+    *,
+    status_file: str = "",
+) -> tuple[int, Any]:
+    """Structured output: for a ``request`` carrying a ``schema``, capture the
+    model's schema-filled JSON and return ``(exit_code, parsed)``. Returns
+    ``(code, None)`` on a non-zero exit or unparseable output — the caller
+    decides whether to fall back. Thinking is off (forced tool-use excludes it)."""
+    import json
+
+    code, text = chat_to_str(provider, request, thinking="none", status_file=status_file)
+    if code != 0:
+        return code, None
+    try:
+        return code, json.loads(text)
+    except (ValueError, TypeError):
+        return code, None
 
 
 def complete(

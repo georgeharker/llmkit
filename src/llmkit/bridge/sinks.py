@@ -18,10 +18,13 @@ from typing import TextIO, Union
 Sink = Union[None, str, TextIO]
 
 
-def open_target(spec: str) -> Sink:
+def open_target(spec: Union[str, TextIO]) -> Sink:
     """Resolve a ``--content`` / ``--thinking`` spec to a sink.
 
     Returns:
+      an already-open writable stream passed through as-is (in-process capture —
+        e.g. a ``StringIO`` from :func:`llmkit.bridge.chat_to_str`; the caller owns
+        it),
       ``None`` for ``none`` (drop entirely),
       the literal sentinel ``'inline'`` (the StreamSplitter interprets it),
       ``sys.stdout`` for ``-``,
@@ -30,6 +33,8 @@ def open_target(spec: str) -> Sink:
     Files are opened line-buffered so a downstream reader sees output
     promptly.
     """
+    if not isinstance(spec, str):   # already-open TextIO (caller-owned capture)
+        return spec
     if spec == "none":
         return None
     if spec == "-":
