@@ -15,6 +15,12 @@ Format differences from the openai-compatible path this copes with:
   sampling internally. Steer behaviour through the prompt instead.
 * Thinking is configured via the ``thinking`` request param (adaptive only on
   current models — ``budget_tokens`` is removed), not ``chat_template_kwargs``.
+* ``endpoint`` follows the SAME ``/v1``-style convention as the openai adapter
+  (e.g. ``https://opencode.ai/zen/v1/messages`` from a gateway's docs, or
+  ``http://host/v1``), but the SDK owns the ``/v1/messages`` suffix — it appends
+  it to ``base_url``. So the ``/v1...`` tail is stripped here before handing the
+  host base to the SDK (else it would double to ``.../v1/v1/messages``). See
+  :func:`_base_url`.
 
 The SDK is an OPTIONAL dependency, imported here so the default
 openai-compatible path never requires it.
@@ -25,9 +31,28 @@ from __future__ import annotations
 import os
 import sys
 from typing import Any, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from ..bridge import DEFAULT_ENDPOINT, ChatRequest, _Emitter
 from ..config import Provider
+
+
+def _base_url(endpoint: str) -> str:
+    """Derive the anthropic SDK ``base_url`` from a configured endpoint.
+
+    The SDK appends ``/v1/messages`` to ``base_url``, so a ``/v1``-style
+    endpoint — the openai-adapter convention, and what gateway docs list (e.g.
+    OpenCode Zen's ``https://opencode.ai/zen/v1/messages``) — must have its
+    ``/v1...`` tail dropped or the request URL doubles to ``.../v1/v1/messages``.
+    Keep scheme, host, and any path prefix *before* the first ``v1`` path
+    segment; an endpoint with no ``v1`` segment (``https://api.anthropic.com``)
+    is returned unchanged. ``v1`` in the host (``https://v1.example.com``) is
+    untouched — only path segments are considered.
+    """
+    parts = urlsplit(endpoint)
+    segs = parts.path.split("/")
+    path = "/".join(segs[: segs.index("v1")]) if "v1" in segs else parts.path.rstrip("/")
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 def _require_sdk() -> Any:
@@ -78,9 +103,10 @@ def stream_anthropic(
         api_key=_resolve_api_key(provider),
     )
     # The bridge fills endpoint with the openai/ollama default; only forward an
-    # endpoint the user actually customised (an Anthropic-compatible gateway).
+    # endpoint the user actually customised (an Anthropic-compatible gateway),
+    # normalised to the host base the SDK wants (see _base_url).
     if provider.endpoint and provider.endpoint != DEFAULT_ENDPOINT:
-        kwargs["base_url"] = provider.endpoint
+        kwargs["base_url"] = _base_url(provider.endpoint)
     client = anthropic.Anthropic(**kwargs)
 
     create: dict[str, Any] = dict(
