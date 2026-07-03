@@ -118,6 +118,7 @@ def with_defaults(provider: Provider) -> Provider:
         else DEFAULT_TEMPERATURE,
         enable_thinking=provider.enable_thinking or "auto",
         stop=provider.stop,
+        headers=provider.headers,
         extra=provider.extra,
     )
 
@@ -340,8 +341,6 @@ def complete(
             file=sys.stderr,
         )
         return 2
-
-    from typing import Any
 
     client = build_client(provider)
     kwargs: dict[str, Any] = dict(

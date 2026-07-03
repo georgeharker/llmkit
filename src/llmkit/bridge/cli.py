@@ -20,7 +20,7 @@ import sys
 from typing import List, Optional
 
 from . import bridge
-from .config import Provider
+from .config import Provider, _header_item
 
 
 def _add_common(s: argparse.ArgumentParser) -> None:
@@ -34,6 +34,18 @@ def _add_common(s: argparse.ArgumentParser) -> None:
     s.add_argument("--api-key", default="")
     s.add_argument("--api-key-env", default="")
     s.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra HTTP request header (repeatable). Sent on every call by the "
+        "HTTP adapters (openai-compatible/anthropic/google); claude_code has no "
+        "HTTP client and ignores it. VALUE supports $VAR/${VAR} env expansion "
+        "plus the ${uuid}/${epoch} dynamic tokens (braces required; there is no "
+        "escape for a literal $). Use for gateway routing keys the SDK won't "
+        "set (e.g. --header x-opencode-request=zsh-ai for OpenCode Zen).",
+    )
+    s.add_argument(
         "--adapter",
         choices=["openai-compatible", "claude_code", "anthropic", "google"],
         default=os.environ.get("LLMKIT_ADAPTER", "openai-compatible"),
@@ -43,6 +55,22 @@ def _add_common(s: argparse.ArgumentParser) -> None:
         "gateway (e.g. OpenCode Zen) to route a native protocol through it. "
         "complete/FIM is openai-compatible-only.",
     )
+
+
+def _parse_headers(items: List[str]) -> dict[str, str]:
+    """Parse repeated ``--header KEY=VALUE`` flags into a dict. Splits on the
+    first ``=`` so a value may itself contain ``=``. A missing ``=`` or empty
+    name is a usage error. Names are lowercased and both halves stripped (see
+    ``config._header_item``), so later duplicates win per key regardless of
+    case — which is what makes the zstyle→TOML override order reliable."""
+    out: dict[str, str] = {}
+    for item in items:
+        key, sep, val = item.partition("=")
+        key, val = _header_item(key, val)
+        if not sep or not key:
+            raise SystemExit(f"llmkit: --header expects KEY=VALUE, got {item!r}")
+        out[key] = val
+    return out
 
 
 def _provider_from_args(args: argparse.Namespace) -> Provider:
@@ -56,6 +84,7 @@ def _provider_from_args(args: argparse.Namespace) -> Provider:
         api_key_env=args.api_key_env or None,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
+        headers=_parse_headers(args.header),
     )
 
 

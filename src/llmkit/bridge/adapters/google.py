@@ -24,6 +24,7 @@ import sys
 from typing import Any, Optional
 
 from ..bridge import DEFAULT_ENDPOINT, ChatRequest, _Emitter
+from ..client import resolved_headers
 from ..config import Provider
 
 
@@ -71,8 +72,15 @@ def stream_google(provider: Provider, request: ChatRequest, emitter: _Emitter) -
     client_kwargs: dict[str, Any] = dict(api_key=_resolve_api_key(provider))
     # The bridge fills endpoint with the openai/ollama default; only forward an
     # endpoint the user actually customised (a Gemini-compatible gateway).
+    # Custom headers (e.g. a gateway routing key) ride on the same HttpOptions.
+    http_opts: dict[str, Any] = {}
     if provider.endpoint and provider.endpoint != DEFAULT_ENDPOINT:
-        client_kwargs["http_options"] = types.HttpOptions(base_url=provider.endpoint)
+        http_opts["base_url"] = provider.endpoint
+    headers = resolved_headers(provider)
+    if headers:
+        http_opts["headers"] = headers
+    if http_opts:
+        client_kwargs["http_options"] = types.HttpOptions(**http_opts)
     client = genai.Client(**client_kwargs)
 
     config = types.GenerateContentConfig(

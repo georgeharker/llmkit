@@ -50,6 +50,7 @@ _PROVIDER_FIELDS = frozenset(
         "temperature",
         "enable_thinking",
         "stop",
+        "headers",
     }
 )
 
@@ -83,6 +84,37 @@ def _as_table(value: object) -> dict[str, object]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _header_item(key: object, value: object) -> tuple[str, str]:
+    """Normalise one header entry. Names are case-insensitive per RFC 9110
+    (and lowercase on the wire in HTTP/2), so lowercase them — that is also
+    what makes the per-key merge across ``[defaults]`` / provider / CLI
+    reliable. Whitespace is stripped from both halves (h11 rejects padded
+    values at request time). Non-string values are stringified via ``str()``
+    (so TOML ``true`` lands as ``'True'``, Python's casing)."""
+    return str(key).strip().lower(), str(value).strip()
+
+
+def _as_headers(value: object) -> dict[str, str]:
+    """Coerce a ``headers`` field into a str→str dict. Accepts a TOML table,
+    or a list of ``KEY=VALUE`` strings — the same shape the CLI ``--header``
+    flag and the zsh ``headers`` zstyle use, so either surface's idiom works.
+    Anything else (incl. missing) → ``{}``. Entries with an empty name are
+    dropped; see :func:`_header_item` for normalisation."""
+    if isinstance(value, (list, tuple)):
+        out: dict[str, str] = {}
+        for item in value:
+            key, _, val = str(item).partition("=")
+            key, val = _header_item(key, val)
+            if key:
+                out[key] = val
+        return out
+    return {
+        k: v
+        for k, v in (_header_item(kk, vv) for kk, vv in _as_table(value).items())
+        if k
+    }
+
+
 @dataclass(frozen=True)
 class Provider:
     """A backend config. Every field is optional — ``None`` means
@@ -102,6 +134,12 @@ class Provider:
     temperature: Optional[float] = None
     enable_thinking: Optional[str] = None  # auto|true|false
     stop: tuple[str, ...] = ()
+    # Extra HTTP request headers, sent on every call by the openai/anthropic/
+    # google adapters (as the SDKs' ``default_headers`` / ``HttpOptions``). Used
+    # for gateway routing keys a gateway demands but the SDK won't set — e.g.
+    # OpenCode Zen's ``x-opencode-request``, which its qwen pool requires (absent
+    # it, zen 503s ``failover_exhausted``). Merges per-key over ``[defaults]``.
+    headers: Mapping[str, str] = field(default_factory=dict)
     # Forward-compat passthrough for unknown [providers.*] keys.
     extra: Mapping[str, "TomlValue"] = field(default_factory=dict)
 
@@ -121,6 +159,7 @@ class Provider:
             temperature=_opt_float(raw.get("temperature")),
             enable_thinking=_normalise_thinking(raw.get("enable_thinking")),
             stop=_as_stop(raw.get("stop")),
+            headers=_as_headers(raw.get("headers")),
             extra=cast("Mapping[str, TomlValue]", extra),
         )
 

@@ -34,6 +34,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from ..bridge import DEFAULT_ENDPOINT, ChatRequest, _Emitter
+from ..client import resolved_headers
 from ..config import Provider
 
 
@@ -107,6 +108,9 @@ def stream_anthropic(
     # normalised to the host base the SDK wants (see _base_url).
     if provider.endpoint and provider.endpoint != DEFAULT_ENDPOINT:
         kwargs["base_url"] = _base_url(provider.endpoint)
+    headers = resolved_headers(provider)
+    if headers:
+        kwargs["default_headers"] = headers
     client = anthropic.Anthropic(**kwargs)
 
     create: dict[str, Any] = dict(
