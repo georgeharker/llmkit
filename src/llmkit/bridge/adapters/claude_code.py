@@ -76,6 +76,14 @@ def _build_options(sdk: Any, provider: Provider, request: ChatRequest) -> Any:
     # NB: Claude Code returns SUMMARISED thinking (no raw chain-of-thought),
     # so expect it terser than a local reasoning model. It does stream token
     # by token via the partial-message events.
+    # Structured output (a JSON Schema request): use the SDK's NATIVE output_format
+    # (Messages-API shape); the result lands in ResultMessage.structured_output. Force
+    # thinking off — structured output and thinking don't mix (as with forced tool-use).
+    if getattr(request, "schema", None):
+        opts["output_format"] = {"type": "json_schema", "schema": request.schema}
+        opts["thinking"] = {"type": "disabled"}
+        return sdk.ClaudeAgentOptions(**opts)
+
     flag = provider.enable_thinking or "auto"
     if flag == "false":
         opts["thinking"] = {"type": "disabled"}
@@ -131,3 +139,28 @@ async def _run(
                     emitter.feed_reasoning(getattr(block, "thinking", "") or "")
                 elif isinstance(block, sdk.TextBlock):
                     emitter.feed_content(getattr(block, "text", "") or "")
+
+
+def structured_claude_code(
+    provider: Provider, request: ChatRequest
+) -> "tuple[int, Any]":
+    """Structured output via the SDK's native ``output_format`` (set in
+    ``_build_options`` when the request carries a schema). Runs the single-turn
+    query and returns ``(exit_code, structured_output)`` from the ResultMessage —
+    the parsed object matching the schema, or ``(0, None)`` if the model produced
+    none, or ``(1, None)`` on an SDK-reported error. No text parsing: the CLI does
+    the schema enforcement + JSON parse and hands back a Python object."""
+    sdk = _require_sdk()
+    import anyio  # bundled with the SDK
+
+    out: dict[str, Any] = {"data": None, "error": False}
+
+    async def _run_structured() -> None:
+        options = _build_options(sdk, provider, request)
+        async for message in sdk.query(prompt=request.user, options=options):
+            if isinstance(message, sdk.ResultMessage):
+                out["data"] = getattr(message, "structured_output", None)
+                out["error"] = bool(getattr(message, "is_error", False))
+
+    anyio.run(_run_structured)
+    return (1 if out["error"] else 0), out["data"]

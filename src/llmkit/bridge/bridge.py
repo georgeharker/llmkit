@@ -313,6 +313,12 @@ def chat_structured(
     decides whether to fall back. Thinking is off (forced tool-use excludes it)."""
     import json
 
+    # claude_code enforces the schema via the SDK's native output_format and returns
+    # a parsed object in ResultMessage.structured_output — no text round-trip.
+    if provider.adapter == "claude_code":
+        from .adapters.claude_code import structured_claude_code
+        return structured_claude_code(with_defaults(provider), request)
+
     code, text = chat_to_str(provider, request, thinking="none", status_file=status_file)
     if code != 0:
         return code, None
