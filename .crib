@@ -1,0 +1,7 @@
+# Auto-created by `crib project setup` — ties this repo to a crib project.
+project: llmkit
+paths:
+  - "**/*.py"
+docs:
+  - "README.md"
+  - "docs/**/*.md"
