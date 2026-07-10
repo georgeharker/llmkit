@@ -1,7 +1,11 @@
+# Distribution name is `polyllmkit` (the bare `llmkit` PyPI slot is free, but the
+# name is generic/crowded — 63+ GitHub repos share it — so we publish under a
+# distinct slug). The IMPORT name stays `llmkit` (see [tool.uv.build-backend]
+# module-name below): consumers keep `import llmkit`, `pip install polyllmkit`.
 [project]
-name = "llmkit"
+name = "polyllmkit"
 version = "0.1.0"
-description = "Streaming LLM bridge + markdown rendering toolkit for terminal apps."
+description = "Streaming, multi-provider LLM bridge + markdown rendering toolkit for terminal apps."
 requires-python = ">=3.11"  # tomllib (bridge.config) is stdlib only from 3.11
 # Base install pulls nothing — pick the subpackage(s) you need via extras.
 # This keeps the two subpackages' dependency graphs disjoint: `md` never
@@ -23,11 +27,13 @@ google = ["google-genai>=1.0"]  # google adapter (native Gemini API)
 md = ["rich>=13.0", "textual>=0.50", "markdown-it-py>=3.0"]
 
 [build-system]
-requires = ["uv_build>=0.5"]
+requires = ["uv_build>=0.5,<0.12"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-root = "src"
+# Import name != distribution name (like scikit-learn -> sklearn): dist is
+# `polyllmkit`, but the package imports as `llmkit`. Keep this `llmkit`.
 module-name = "llmkit"
 
 [dependency-groups]
