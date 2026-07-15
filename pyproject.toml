@@ -4,7 +4,7 @@
 # module-name below): consumers keep `import llmkit`, `pip install polyllmkit`.
 [project]
 name = "polyllmkit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Streaming, multi-provider LLM bridge + markdown rendering toolkit for terminal apps."
 requires-python = ">=3.11"  # tomllib (bridge.config) is stdlib only from 3.11
 # Base install pulls nothing — pick the subpackage(s) you need via extras.
@@ -21,6 +21,14 @@ bridge = ["openai>=1.0"]
 claude = ["claude-agent-sdk>=0.2"]  # claude_code adapter (Claude Agent SDK)
 anthropic = ["anthropic>=0.40"]  # anthropic adapter (native Messages API)
 google = ["google-genai>=1.0"]  # google adapter (native Gemini API)
+# Every backend at once — for hosts that resolve the adapter at runtime and
+# must have all of them present (e.g. cribsheet's daemon).
+all = [
+    "openai>=1.0",
+    "claude-agent-sdk>=0.2",
+    "anthropic>=0.40",
+    "google-genai>=1.0",
+]
 # llmkit.md — markdown rendering (one-shot + live stream + scrollable modal).
 # markdown-it-py is a direct import in md.render.stream (textual also pulls
 # it, but we depend on it explicitly since we use it ourselves).

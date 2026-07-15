@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import time
 import uuid
 from typing import Any, Callable, Dict, Optional
@@ -55,14 +54,12 @@ def build_client(provider: Provider) -> Any:
     hard import of ``openai.OpenAI`` at module load."""
     try:
         from openai import OpenAI
-    except ImportError:
-        print(
+    except ImportError as e:
+        raise ImportError(
             "llmkit: the openai package is not installed. "
             "Install it with `pip install llmkit[bridge]` (or `pip install "
-            "openai`).",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
+            "openai`)."
+        ) from e
     return OpenAI(
         base_url=provider.endpoint,
         api_key=_resolve_api_key(provider),

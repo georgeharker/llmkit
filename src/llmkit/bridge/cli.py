@@ -172,3 +172,9 @@ if __name__ == "__main__":
         sys.exit(main())
     except BrokenPipeError:
         sys.exit(0)
+    except ImportError as e:
+        # A missing optional-adapter dependency. The adapters raise a catchable
+        # ImportError (never SystemExit, so library hosts survive); the CLI turns
+        # it back into the actionable message + exit(2).
+        print(e, file=sys.stderr)
+        sys.exit(2)

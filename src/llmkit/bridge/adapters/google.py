@@ -20,7 +20,6 @@ openai-compatible path never requires it.
 from __future__ import annotations
 
 import os
-import sys
 from typing import Any, Optional
 
 from ..bridge import DEFAULT_ENDPOINT, ChatRequest, _Emitter
@@ -33,14 +32,12 @@ def _require_sdk() -> Any:
     try:
         from google import genai  # type: ignore[import-untyped,import-not-found]
         from google.genai import types  # type: ignore[import-untyped,import-not-found]
-    except ImportError:
-        print(
+    except ImportError as e:
+        raise ImportError(
             "llmkit: the google adapter needs the Google GenAI SDK. "
             "Install it with `pip install llmkit[google]` (or `pip install "
-            "google-genai`).",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
+            "google-genai`)."
+        ) from e
     return genai, types
 
 

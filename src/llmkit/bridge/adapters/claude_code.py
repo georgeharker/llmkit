@@ -18,7 +18,6 @@ CLI governs those itself. Only ``model``, the request's ``system``, and
 from __future__ import annotations
 
 import os
-import sys
 from typing import Any
 
 from ..bridge import ChatRequest, _Emitter
@@ -26,17 +25,21 @@ from ..config import Provider
 
 
 def _require_sdk() -> Any:
-    """Import the SDK or exit(2) with an actionable install hint."""
+    """Import the SDK, or raise ImportError with an actionable install hint.
+
+    A missing optional dependency must surface as a *catchable* exception, never
+    ``SystemExit``: llmkit is a library, and hosts embed it inside long-lived
+    processes (e.g. an MCP daemon's lifespan startup) where a stray ``SystemExit``
+    — a ``BaseException`` — escapes ``except Exception`` and tears the whole
+    process down. The CLI translates this back into a clean exit(2)."""
     try:
         import claude_agent_sdk as sdk  # type: ignore[import-not-found]
-    except ImportError:
-        print(
+    except ImportError as e:
+        raise ImportError(
             "llmkit: the claude_code adapter needs the Claude Agent SDK. "
             "Install it with `pip install llmkit[claude]` (or `pip install "
-            "claude-agent-sdk`), and make sure the `claude` CLI is on PATH.",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
+            "claude-agent-sdk`), and make sure the `claude` CLI is on PATH."
+        ) from e
     return sdk
 
 

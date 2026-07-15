@@ -29,7 +29,6 @@ openai-compatible path never requires it.
 from __future__ import annotations
 
 import os
-import sys
 from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -57,17 +56,18 @@ def _base_url(endpoint: str) -> str:
 
 
 def _require_sdk() -> Any:
-    """Import the SDK or exit(2) with an actionable install hint."""
+    """Import the SDK, or raise ImportError with an actionable install hint.
+
+    Catchable exception, never ``SystemExit`` — see the note in
+    ``claude_code._require_sdk``."""
     try:
         import anthropic  # type: ignore[import-not-found]
-    except ImportError:
-        print(
+    except ImportError as e:
+        raise ImportError(
             "llmkit: the anthropic adapter needs the Anthropic SDK. "
             "Install it with `pip install llmkit[anthropic]` (or `pip install "
-            "anthropic`).",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
+            "anthropic`)."
+        ) from e
     return anthropic
 
 
