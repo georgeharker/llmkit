@@ -4,7 +4,7 @@
 # module-name below): consumers keep `import llmkit`, `pip install polyllmkit`.
 [project]
 name = "polyllmkit"
-version = "0.1.1"
+version = "0.1.2"
 description = "Streaming, multi-provider LLM bridge + markdown rendering toolkit for terminal apps."
 requires-python = ">=3.11"  # tomllib (bridge.config) is stdlib only from 3.11
 # Base install pulls nothing — pick the subpackage(s) you need via extras.
