@@ -58,15 +58,15 @@ def _thinking_budget() -> int:
 
 def _build_options(sdk: Any, provider: Provider, request: ChatRequest) -> Any:
     """Assemble ClaudeAgentOptions for a tool-free single-turn chat."""
-    opts: dict[str, Any] = dict(
-        tools=[],  # no built-in tools — plain chat, no file/shell access
-        allowed_tools=[],
-        disallowed_tools=[],
-        max_turns=1,
-        permission_mode="bypassPermissions",
-        include_partial_messages=True,  # token-level streaming deltas
-        setting_sources=[],  # ignore project/user CLAUDE.md, settings, etc.
-    )
+    opts: dict[str, Any] = {
+        "tools": [],  # no built-in tools — plain chat, no file/shell access
+        "allowed_tools": [],
+        "disallowed_tools": [],
+        "max_turns": 1,
+        "permission_mode": "bypassPermissions",
+        "include_partial_messages": True,  # token-level streaming deltas
+        "setting_sources": [],  # ignore project/user CLAUDE.md, settings, etc.
+    }
     if provider.model:
         opts["model"] = provider.model
     if request.system:
@@ -87,13 +87,22 @@ def _build_options(sdk: Any, provider: Provider, request: ChatRequest) -> Any:
         opts["thinking"] = {"type": "disabled"}
         return sdk.ClaudeAgentOptions(**opts)
 
+    # ``display: "summarized"`` is required on current models: they default it
+    # to ``omitted``, which silences thinking entirely — no deltas stream and
+    # the final ThinkingBlock is empty (verified: enabled+budget without display
+    # streams 0 chars of thinking; with display, ~tokens arrive). Mirrors the
+    # anthropic adapter's same-named field.
     flag = provider.enable_thinking or "auto"
     if flag == "false":
         opts["thinking"] = {"type": "disabled"}
     elif flag == "true":
-        opts["thinking"] = {"type": "enabled", "budget_tokens": _thinking_budget()}
+        opts["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": _thinking_budget(),
+            "display": "summarized",
+        }
     else:
-        opts["thinking"] = {"type": "adaptive"}
+        opts["thinking"] = {"type": "adaptive", "display": "summarized"}
 
     return sdk.ClaudeAgentOptions(**opts)
 
@@ -146,7 +155,7 @@ async def _run(
 
 def structured_claude_code(
     provider: Provider, request: ChatRequest
-) -> "tuple[int, Any]":
+) -> tuple[int, Any]:
     """Structured output via the SDK's native ``output_format`` (set in
     ``_build_options`` when the request carries a schema). Runs the single-turn
     query and returns ``(exit_code, structured_output)`` from the ResultMessage —

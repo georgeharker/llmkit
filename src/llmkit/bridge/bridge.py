@@ -336,7 +336,7 @@ def complete(
 ) -> int:
     """Run a text-completion (FIM) request, streaming text to ``out``
     (default stdout). ``openai-compatible`` only."""
-    out = out if out is not None else sys.stdout
+    sink = out if out is not None else sys.stdout
     provider = with_defaults(provider)
     if not provider_supports_complete(provider):
         print(
@@ -349,12 +349,12 @@ def complete(
         return 2
 
     client = build_client(provider)
-    kwargs: dict[str, Any] = dict(
-        model=provider.model,
-        prompt=request.prompt,
-        max_tokens=provider.max_tokens,
-        temperature=provider.temperature,
-    )
+    kwargs: dict[str, Any] = {
+        "model": provider.model,
+        "prompt": request.prompt,
+        "max_tokens": provider.max_tokens,
+        "temperature": provider.temperature,
+    }
     if request.suffix:
         kwargs["suffix"] = request.suffix
     if request.stop:
@@ -364,8 +364,8 @@ def complete(
         for chunk in client.completions.create(**kwargs):
             t = chunk.choices[0].text if chunk.choices else ""
             if t:
-                out.write(t)
-                out.flush()
+                sink.write(t)
+                sink.flush()
     except KeyboardInterrupt:
         return 130
     except Exception as e:
