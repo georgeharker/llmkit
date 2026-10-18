@@ -113,8 +113,15 @@ PY
 }
 sync_uv_lock() { # $1=pyproject.toml $2=new-spelling-as-given
   local m="$1" unew
+  local lock="${m%/pyproject.toml}/uv.lock"
+  # Only a TRACKED uv.lock moves with the bump — repos that gitignore it
+  # (llmkit does: the lock is local-only) get a harmless skip. Check via
+  # git, not existence: an ignored lock still exists on disk.
+  if ! git -C "$ROOT" ls-files --error-unmatch "$lock" >/dev/null 2>&1; then
+    echo "  uv.lock untracked — skipped"
+    return 0
+  fi
   unew="$(normalize_pep440 "$2")"
-  local lock="${m%/pyproject.toml}/uv.lock"; [ -f "$lock" ] || { echo "note: no uv.lock beside $m — skipped" >&2; return 0; }
   local pname
   pname="$(sed -n '/^\[project\]/,/^\[/p' "$m" | grep -E '^name *= *"' | head -1 \
            | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -164,7 +171,7 @@ if [ "$do_commit" = 1 ]; then
   allowed=(); for f in "${MANIFESTS[@]}"; do allowed+=("$(basename "$f")"); done; allowed+=("uv.lock")
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    rel="${line#* }"; rel="${rel#\"}"   # strip the XY status prefix (and quoting)
+    rel="${line:3}"; rel="${rel#\"}"   # porcelain: 2 status chars + space, then the path
     keep=0
     for a in "${allowed[@]}"; do [[ "$rel" == "$a" || "$rel" == "$a"/* ]] && keep=1; done
     [ "$keep" = 1 ] || die "working tree has unrelated changes; commit or stash them first ($rel)"
@@ -181,7 +188,7 @@ sync_uv_lock "${MANIFESTS[0]}" "$new"
 
 [ "$do_commit" = 0 ] && { echo "files updated; skipped commit (--no-commit)"; exit 0; }
 
-git -C "$ROOT" add "${MANIFESTS[@]}" "$ROOT/uv.lock"
+git -C "$ROOT" add "${MANIFESTS[@]}"
 git -C "$ROOT" commit -m "release: $TAG"
 echo "committed."
 
