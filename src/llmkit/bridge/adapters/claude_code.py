@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from .._spawn import cli_transport
 from ..bridge import ChatRequest, _Emitter
 from ..config import Provider
 
@@ -139,7 +140,10 @@ async def _run(
 ) -> None:
     options = _build_options(sdk, provider, request)
     saw_delta = False
-    async for message in sdk.query(prompt=request.user, options=options):
+    transport = cli_transport(request.user, options)
+    async for message in sdk.query(
+        prompt=request.user, options=options, transport=transport
+    ):
         if isinstance(message, sdk.StreamEvent):
             if _handle_event(message.event, emitter):
                 saw_delta = True
@@ -169,7 +173,10 @@ def structured_claude_code(
 
     async def _run_structured() -> None:
         options = _build_options(sdk, provider, request)
-        async for message in sdk.query(prompt=request.user, options=options):
+        transport = cli_transport(request.user, options)
+        async for message in sdk.query(
+            prompt=request.user, options=options, transport=transport
+        ):
             if isinstance(message, sdk.ResultMessage):
                 out["data"] = getattr(message, "structured_output", None)
                 out["error"] = bool(getattr(message, "is_error", False))
