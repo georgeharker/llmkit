@@ -15,12 +15,14 @@ failure semantics. ``complete`` (FIM) remains ``openai-compatible``-only.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import io
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, TextIO
+from typing import Any, TextIO
 
 from .client import Deadline, build_client
 from .config import Config, Provider
@@ -43,7 +45,7 @@ ADAPTERS = ("openai-compatible", "anthropic", "google", "claude_code")
 _COMPLETE_ADAPTERS = frozenset({"openai-compatible"})
 
 
-def adapter_supports_complete(adapter: Optional[str]) -> bool:
+def adapter_supports_complete(adapter: str | None) -> bool:
     """Whether ``adapter`` (``None`` → the default) can serve ``complete`` (FIM).
 
     Queryable up front so a consumer can disable a FIM keybinding / widget for
@@ -84,9 +86,9 @@ class ChatRequest:
     """
 
     user: str
-    system: Optional[str] = None
-    enable_thinking: Optional[str] = None
-    schema: Optional[dict] = None
+    system: str | None = None
+    enable_thinking: str | None = None
+    schema: dict | None = None
     schema_name: str = "emit"
     schema_description: str = ""
 
@@ -125,7 +127,7 @@ def with_defaults(provider: Provider) -> Provider:
 
 
 # ── status events ───────────────────────────────────────────────────────────
-def _open_status(path: str) -> Optional[TextIO]:
+def _open_status(path: str) -> TextIO | None:
     """Open a status file (regular file OR fifo) for line-buffered writes.
     O_RDWR | O_APPEND | O_NONBLOCK so it works against either kind without
     blocking on fifo connect (and without truncating regular files).
@@ -139,7 +141,7 @@ def _open_status(path: str) -> Optional[TextIO]:
         return None
 
 
-def _write_status(fp: Optional[TextIO], event: str) -> None:
+def _write_status(fp: TextIO | None, event: str) -> None:
     """Best-effort status line write. Never raises."""
     if fp is None:
         return
@@ -157,7 +159,7 @@ class _Emitter:
     :meth:`signal_streaming` directly when a chunk arrives that carries
     neither."""
 
-    def __init__(self, splitter: StreamSplitter, status_fp: Optional[TextIO]) -> None:
+    def __init__(self, splitter: StreamSplitter, status_fp: TextIO | None) -> None:
         self._splitter = splitter
         self._status_fp = status_fp
         self._started = False
@@ -221,17 +223,13 @@ def _run_chat(
     finally:
         # ALWAYS flush — interrupts and exceptions still get the close wrap
         # emitted, so downstream readers see a complete document.
-        try:
+        with contextlib.suppress(Exception):
             splitter.finish()
-        except Exception:
-            pass
         close_sink(content_sink)
         close_sink(thinking_sink)
         if status_fp is not None:
-            try:
+            with contextlib.suppress(OSError):
                 status_fp.close()
-            except OSError:
-                pass
     return rc
 
 
@@ -333,7 +331,7 @@ def complete(
     provider: Provider,
     request: CompleteRequest,
     *,
-    out: Optional[TextIO] = None,
+    out: TextIO | None = None,
 ) -> int:
     """Run a text-completion (FIM) request, streaming text to ``out``
     (default stdout). ``openai-compatible`` only."""
