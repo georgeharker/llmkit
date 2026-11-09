@@ -122,6 +122,7 @@ def with_defaults(provider: Provider) -> Provider:
         stop=provider.stop,
         headers=provider.headers,
         timeout=provider.timeout,
+        structured=provider.structured,
         extra=provider.extra,
     )
 

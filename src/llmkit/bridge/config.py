@@ -52,6 +52,7 @@ _PROVIDER_FIELDS = frozenset(
         "stop",
         "headers",
         "timeout",
+        "structured",
     }
 )
 
@@ -148,6 +149,12 @@ class Provider:
     # A stalled read can overshoot the deadline by up to one more ``timeout``.
     # ``None`` leaves each SDK's own default (openai/anthropic: 600 s per read).
     timeout: Optional[float] = None
+    # How the openai-compatible adapter asks for structured output (a request
+    # ``schema``): "response_format" (default) or "tool", one forced tool call
+    # whose parameters are the schema. Use "tool" for a server that ignores
+    # response_format but honours tool calls; Ollama Cloud is one (see
+    # llmkit.bridge.structured). Other adapters ignore it.
+    structured: Optional[str] = None
     # Forward-compat passthrough for unknown [providers.*] keys.
     extra: Mapping[str, "TomlValue"] = field(default_factory=dict)
 
@@ -169,6 +176,7 @@ class Provider:
             stop=_as_stop(raw.get("stop")),
             headers=_as_headers(raw.get("headers")),
             timeout=_opt_float(raw.get("timeout")),
+            structured=_structured_mode(raw.get("structured")),
             extra=cast("Mapping[str, TomlValue]", extra),
         )
 
@@ -193,6 +201,23 @@ class Provider:
         if isinstance(self_val, tuple):
             return self_val if self_val else base_val
         return self_val if self_val is not None else base_val
+
+
+STRUCTURED_MODES = ("response_format", "tool")
+
+
+def _structured_mode(value: object) -> Optional[str]:
+    """Validate a ``structured`` field: one of :data:`STRUCTURED_MODES`, or
+    ``None`` if unspecified. An unknown mode is a config error, not a silent
+    fallback to the channel that may not work."""
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if s not in STRUCTURED_MODES:
+        raise ValueError(
+            f"llmkit: structured = {value!r}; expected one of {STRUCTURED_MODES}"
+        )
+    return s
 
 
 def _opt_str(v: object) -> Optional[str]:

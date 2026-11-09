@@ -25,6 +25,7 @@ from typing import Any, Optional
 from ..bridge import DEFAULT_ENDPOINT, ChatRequest, _Emitter
 from ..client import Deadline, resolved_headers
 from ..config import Provider
+from ..structured import schema_instruction
 
 
 def _require_sdk() -> Any:
@@ -82,11 +83,23 @@ def stream_google(provider: Provider, request: ChatRequest, emitter: _Emitter) -
         client_kwargs["http_options"] = types.HttpOptions(**http_opts)
     client = genai.Client(**client_kwargs)
 
+    system = request.system or None
+    structured: dict[str, Any] = {}
+    if request.schema is not None:
+        # Native JSON mode, plus the schema natively where this SDK version has
+        # the field, plus in the prompt for a gateway that drops either (see
+        # llmkit.bridge.structured).
+        structured["response_mime_type"] = "application/json"
+        if "response_json_schema" in types.GenerateContentConfig.model_fields:
+            structured["response_json_schema"] = request.schema
+        hint = schema_instruction(request.schema)
+        system = f"{system}\n\n{hint}" if system else hint
     config = types.GenerateContentConfig(
-        system_instruction=request.system or None,
+        system_instruction=system,
         max_output_tokens=provider.max_tokens,
         temperature=provider.temperature,
         thinking_config=_thinking_config(types, provider.enable_thinking),
+        **structured,
     )
 
     deadline = Deadline(provider.timeout)

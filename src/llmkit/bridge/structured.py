@@ -5,16 +5,25 @@ openai-compatible, a forced tool for anthropic, ``output_format`` for
 claude_code), but an openai-compatible server is free to ignore
 ``response_format``: e.g. GLM at ollama.com answers in ordinary content, with
 the JSON fenced in ````` ```json ````` and missing the schema's wrapper object
-(a bare ``[...]`` where the schema says ``{"symbols": [...]}``). So the reply
-is parsed leniently here, then checked against the schema, and any failure
-raises :class:`StructuredOutputError` with the reason. Callers must never
-mistake "nothing usable came back" for success.
+(a bare ``[...]`` where the schema says ``{"symbols": [...]}``). Verified
+against ollama.com: ``json_schema`` (strict or not), ``json_object`` and
+Ollama's native ``format`` are all ignored.
+
+Two defences, both here:
+
+* :func:`schema_instruction` puts the schema in the prompt, so a model whose
+  server drops ``response_format`` still sees the shape (with it, GLM answers
+  with the exact object; without it, it guesses keys).
+* :func:`parse_structured` parses the reply leniently and checks it against
+  the schema; any failure raises :class:`StructuredOutputError` with the
+  reason. Callers must never mistake "nothing usable came back" for success.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from typing import Any
 
 _FENCE = re.compile(r"```[A-Za-z0-9_-]*[ \t]*\n(.*?)\n?```", re.DOTALL)
@@ -29,33 +38,65 @@ _TYPES: dict[str, tuple[type, ...]] = {
 }
 
 
+_DECODER = json.JSONDecoder()
+
+
 class StructuredOutputError(ValueError):
     """The reply held no JSON matching the requested schema."""
 
 
-def extract_json(text: str) -> Any:
-    """The JSON value in ``text``: the whole text, else the first fenced code
-    block that parses, else the first ``{``/``[`` value found in prose."""
+def schema_instruction(schema: dict[str, Any]) -> str:
+    """Prompt text carrying ``schema``, for adapters whose server may not
+    enforce it. Appended to the system prompt."""
+    return (
+        "Respond with ONLY a JSON value that conforms to this JSON Schema - "
+        "no prose, no code fences:\n" + json.dumps(schema)
+    )
+
+
+def _candidates(text: str) -> Iterator[Any]:
+    """Every top-level JSON value ``text`` might mean, most likely first: the
+    whole text (if it parses, it is the only candidate), then each fenced code
+    block, then each ``{``/``[`` value in prose. Never a value nested inside
+    another, so ``{"wrong": [...]}`` can't yield its inner array."""
     s = text.strip()
     if not s:
-        raise StructuredOutputError("empty reply")
-    try:
-        return json.loads(s)
-    except ValueError:
-        pass
+        return
+    whole, end = _decode(s, 0)
+    if end == len(s):
+        yield whole
+        return
     for m in _FENCE.finditer(s):
-        try:
-            return json.loads(m.group(1))
-        except ValueError:
-            continue
-    dec = json.JSONDecoder()
-    for i, ch in enumerate(s):
-        if ch in "{[":
-            try:
-                return dec.raw_decode(s, i)[0]
-            except ValueError:
+        value, end = _decode(m.group(1).strip(), 0)
+        if end:
+            yield value
+    i = 0
+    while i < len(s):
+        if s[i] in "{[":
+            value, end = _decode(s, i)
+            if end:
+                yield value
+                i = end
                 continue
-    raise StructuredOutputError(f"no JSON value in reply: {s[:120]!r}")
+        i += 1
+
+
+def _decode(s: str, start: int) -> tuple[Any, int]:
+    """The JSON value at ``s[start:]`` and the index just past it, or
+    ``(None, 0)`` if none starts there."""
+    try:
+        return _DECODER.raw_decode(s, start)
+    except ValueError:
+        return None, 0
+
+
+def extract_json(text: str) -> Any:
+    """The most likely JSON value in ``text`` (see :func:`_candidates`)."""
+    if not text.strip():
+        raise StructuredOutputError("empty reply")
+    for value in _candidates(text):
+        return value
+    raise StructuredOutputError(f"no JSON value in reply: {text.strip()[:120]!r}")
 
 
 def _sole_array_property(schema: dict[str, Any]) -> str | None:
@@ -115,6 +156,40 @@ def conform(value: Any, schema: dict[str, Any] | None) -> Any:
     return value
 
 
+def merge_tool_arguments(args: list[str], schema: dict[str, Any] | None) -> str:
+    """One structured reply from several tool calls' arguments. A model may
+    split an answer across parallel calls (one ``{"symbols": [x]}`` each);
+    when the schema is an object with a single array property, those arrays
+    are concatenated into one object. Otherwise the calls are returned one per
+    line and :func:`parse_structured` takes the first that fits."""
+    if len(args) == 1:
+        return args[0]
+    key = _sole_array_property(schema) if schema and schema.get("type") == "object" else None
+    if key is not None:
+        merged: list[Any] = []
+        for a in args:
+            value, end = _decode(a.strip(), 0)
+            if not end:
+                break
+            items = value.get(key) if isinstance(value, dict) else value
+            if not isinstance(items, list):
+                break
+            merged.extend(items)
+        else:
+            return json.dumps({key: merged})
+    return "\n".join(args)
+
+
 def parse_structured(text: str, schema: dict[str, Any] | None) -> Any:
-    """Parse a structured-output reply and check it against ``schema``."""
-    return conform(extract_json(text), schema)
+    """The first JSON value in a structured-output reply that fits ``schema``
+    (so a stray ``[...]`` in prose or leaked reasoning can't shadow the real
+    answer). Raises with the most-likely candidate's mismatch if none fits."""
+    first: StructuredOutputError | None = None
+    for value in _candidates(text):
+        try:
+            return conform(value, schema)
+        except StructuredOutputError as e:
+            first = first or e
+    if first is not None:
+        raise first
+    return conform(extract_json(text), schema)  # raises: empty / no JSON

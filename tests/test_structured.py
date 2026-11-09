@@ -41,9 +41,13 @@ SCHEMA: dict[str, Any] = {
 SYMBOLS = [{"name": "f", "kind": "function", "keywords": ["a", "b"]}]
 
 
-def _stub(content: str) -> tuple[str, list[dict[str, Any]]]:
+def _stub(
+    content: str, tool_calls: list[str] | None = None
+) -> tuple[str, list[dict[str, Any]]]:
     """An openai-compatible endpoint that streams ``content`` as ordinary
-    deltas, whatever the request asked for. Returns (endpoint, request bodies)."""
+    deltas, whatever the request asked for, then each of ``tool_calls`` (JSON
+    argument strings) as its own call, split into two fragments. Returns
+    (endpoint, request bodies)."""
     srv = socket.socket()
     srv.bind(("127.0.0.1", 0))
     srv.listen(1)
@@ -67,13 +71,26 @@ def _stub(content: str) -> tuple[str, list[dict[str, Any]]]:
             b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n"
             b"connection: close\r\n\r\n"
         )
-        for piece in (content[: len(content) // 2], content[len(content) // 2 :]):
+        deltas: list[dict[str, Any]] = [
+            {"content": content[: len(content) // 2]},
+            {"content": content[len(content) // 2 :]},
+        ]
+        for i, args in enumerate(tool_calls or []):
+            half = len(args) // 2
+            deltas.append({"tool_calls": [{
+                "index": i, "id": f"call_{i}", "type": "function",
+                "function": {"name": "describe_symbols", "arguments": args[:half]},
+            }]})
+            deltas.append({"tool_calls": [
+                {"index": i, "function": {"arguments": args[half:]}}
+            ]})
+        for delta in deltas:
             chunk = {
                 "id": "1",
                 "object": "chat.completion.chunk",
                 "created": 0,
                 "model": "m",
-                "choices": [{"index": 0, "delta": {"content": piece}}],
+                "choices": [{"index": 0, "delta": delta}],
             }
             conn.sendall(b"data: " + json.dumps(chunk).encode() + b"\n\n")
         conn.sendall(b"data: [DONE]\n\n")
@@ -101,6 +118,30 @@ def test_fenced_bare_array_in_content() -> None:
     assert (code, data) == (0, {"symbols": SYMBOLS})
 
 
+def test_schema_rides_in_the_system_prompt() -> None:
+    """The model must see the schema even when the server drops
+    response_format; the caller's own system prompt is kept, first."""
+    endpoint, bodies = _stub(json.dumps({"symbols": SYMBOLS}))
+    chat_structured(
+        Provider(model="m", endpoint=endpoint, timeout=5),
+        ChatRequest(user="describe", system="Be terse.", schema=SCHEMA),
+    )
+    system = bodies[0]["messages"][0]
+    assert system["role"] == "system"
+    assert system["content"].startswith("Be terse.\n\n")
+    assert json.dumps(SCHEMA) in system["content"]
+
+
+def test_fitting_candidate_wins_over_stray_json() -> None:
+    """Prose (or leaked reasoning) with a stray JSON value before the answer."""
+    reply = (
+        "Thinking: the list is [1, 2] long.</think>\n"
+        + json.dumps({"symbols": SYMBOLS})
+    )
+    code, data, _ = _structured(reply)
+    assert (code, data) == (0, {"symbols": SYMBOLS})
+
+
 def test_plain_object_in_content() -> None:
     code, data, _ = _structured(json.dumps({"symbols": SYMBOLS}))
     assert (code, data) == (0, {"symbols": SYMBOLS})
@@ -124,6 +165,70 @@ def test_unusable_reply_is_a_failure(
     assert "llmkit: structured output:" in capsys.readouterr().err
 
 
+def _tool_structured(*calls: str) -> tuple[int, Any, list[dict[str, Any]]]:
+    endpoint, bodies = _stub("", tool_calls=list(calls))
+    code, data = chat_structured(
+        Provider(model="m", endpoint=endpoint, timeout=5, structured="tool"),
+        ChatRequest(user="describe", system="Be terse.", schema=SCHEMA,
+                    schema_name="describe_symbols"),
+    )
+    return code, data, bodies
+
+
+def test_tool_mode_request_and_reply() -> None:
+    """structured = "tool": one forced tool carrying the schema, no
+    response_format, no schema text in the prompt; the reply is the call's
+    arguments, reassembled from fragments."""
+    code, data, bodies = _tool_structured(json.dumps({"symbols": SYMBOLS}))
+    body = bodies[0]
+    assert "response_format" not in body
+    assert body["tools"] == [{
+        "type": "function",
+        "function": {"name": "describe_symbols", "description": "Return the result.",
+                     "parameters": SCHEMA},
+    }]
+    assert body["tool_choice"] == {"type": "function",
+                                   "function": {"name": "describe_symbols"}}
+    assert body["messages"][0]["content"] == "Be terse."
+    assert (code, data) == (0, {"symbols": SYMBOLS})
+
+
+def test_tool_mode_merges_parallel_calls() -> None:
+    """GLM at ollama.com sometimes splits one answer across parallel calls."""
+    a, b = {"name": "f", "kind": "function"}, {"name": "B", "kind": "class"}
+    code, data, _ = _tool_structured(
+        json.dumps({"symbols": [a]}), json.dumps({"symbols": [b]})
+    )
+    assert (code, data) == (0, {"symbols": [a, b]})
+
+
+def test_tool_mode_bad_arguments_fail() -> None:
+    code, data, _ = _tool_structured('{"symbols": [{"name": "f"}]}')
+    assert (code, data) == (1, None)
+
+
+def test_structured_mode_config() -> None:
+    from llmkit.bridge.config import ConfigParser
+
+    parse = ConfigParser().parse
+    p = parse({"providers": {"x": {"structured": "Tool"}}}).resolve("x")
+    assert p.structured == "tool"
+    with pytest.raises(ValueError, match="structured"):
+        parse({"providers": {"x": {"structured": "grammar"}}})
+
+
+def test_merge_tool_arguments() -> None:
+    from llmkit.bridge.structured import merge_tool_arguments
+
+    one = json.dumps({"symbols": [1]})
+    assert merge_tool_arguments([one], SCHEMA) == one
+    assert json.loads(merge_tool_arguments([one, "[2]"], SCHEMA)) == {"symbols": [1, 2]}
+    # Not mergeable (no single array property): one per line, first fit wins.
+    assert merge_tool_arguments(['{"a": 1}', '{"a": 2}'], {"type": "object"}) == (
+        '{"a": 1}\n{"a": 2}'
+    )
+
+
 def test_extract_json() -> None:
     assert extract_json(' {"a": 1} ') == {"a": 1}
     assert extract_json('Here you go:\n```\n[1, 2]\n```\nDone.') == [1, 2]
@@ -144,3 +249,6 @@ def test_conform() -> None:
     with pytest.raises(StructuredOutputError, match="not in enum"):
         conform("c", {"enum": ["a", "b"]})
     assert parse_structured("[]", None) == []
+    # Nothing fits: the error names the most likely candidate's mismatch.
+    with pytest.raises(StructuredOutputError, match="missing 'symbols'"):
+        parse_structured('{"definitions": []} and [1]', SCHEMA)
