@@ -33,7 +33,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from ..bridge import DEFAULT_ENDPOINT, ChatRequest, _Emitter
-from ..client import resolved_headers
+from ..client import Deadline, resolved_headers, timeout_kwargs
 from ..config import Provider
 
 
@@ -102,6 +102,7 @@ def stream_anthropic(
 
     kwargs: dict[str, Any] = dict(
         api_key=_resolve_api_key(provider),
+        **timeout_kwargs(provider),
     )
     # The bridge fills endpoint with the openai/ollama default; only forward an
     # endpoint the user actually customised (an Anthropic-compatible gateway),
@@ -137,8 +138,10 @@ def stream_anthropic(
     else:
         create["thinking"] = _thinking_config(provider.enable_thinking)
 
+    deadline = Deadline(provider.timeout)
     with client.messages.stream(**create) as stream:
         for event in stream:
+            deadline.check()
             # Any event is a sign of life — fire TTFT before the first non-empty
             # delta (mirrors the openai adapter's explicit signal).
             emitter.signal_streaming()

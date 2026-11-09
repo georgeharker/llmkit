@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, TextIO
 
-from .client import build_client
+from .client import Deadline, build_client
 from .config import Config, Provider
 from .sinks import close_sink, open_target
 from .stream import StreamSplitter
@@ -119,6 +119,7 @@ def with_defaults(provider: Provider) -> Provider:
         enable_thinking=provider.enable_thinking or "auto",
         stop=provider.stop,
         headers=provider.headers,
+        timeout=provider.timeout,
         extra=provider.extra,
     )
 
@@ -360,8 +361,10 @@ def complete(
     if request.stop:
         kwargs["stop"] = list(request.stop)
     kwargs["stream"] = True
+    deadline = Deadline(provider.timeout)
     try:
         for chunk in client.completions.create(**kwargs):
+            deadline.check()
             t = chunk.choices[0].text if chunk.choices else ""
             if t:
                 sink.write(t)

@@ -64,7 +64,31 @@ def build_client(provider: Provider) -> Any:
         base_url=provider.endpoint,
         api_key=_resolve_api_key(provider),
         default_headers=resolved_headers(provider),
+        **timeout_kwargs(provider),
     )
+
+
+def timeout_kwargs(provider: Provider) -> Dict[str, Any]:
+    """Client kwargs for the openai/anthropic SDKs: ``timeout`` (connect and
+    each socket read) and no SDK retries, so a retry can't silently restart
+    the clock past the caller's budget. Empty when no timeout is set."""
+    if provider.timeout is None:
+        return {}
+    return {"timeout": provider.timeout, "max_retries": 0}
+
+
+class Deadline:
+    """A total wall-clock budget for one call, checked between stream chunks.
+    The SDK's per-read timeout catches a stalled read; this catches a stream
+    that keeps trickling past the budget. ``None`` never expires."""
+
+    def __init__(self, seconds: Optional[float]) -> None:
+        self._seconds = seconds
+        self._end = None if seconds is None else time.monotonic() + seconds
+
+    def check(self) -> None:
+        if self._end is not None and time.monotonic() > self._end:
+            raise TimeoutError(f"no complete response within {self._seconds:g}s")
 
 
 def _resolve_api_key(provider: Provider) -> str:

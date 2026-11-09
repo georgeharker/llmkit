@@ -132,7 +132,16 @@ def stream_claude_code(
     sdk = _require_sdk()
     import anyio  # bundled with the SDK
 
-    anyio.run(_run, sdk, provider, request, emitter)
+    anyio.run(_bounded, provider.timeout, _run(sdk, provider, request, emitter))
+
+
+async def _bounded(timeout: float | None, coro: Any) -> None:
+    """Await ``coro``, cancelling it after ``timeout`` seconds (TimeoutError).
+    Cancellation unwinds the SDK's query, which terminates the CLI."""
+    import anyio
+
+    with anyio.fail_after(timeout):
+        await coro
 
 
 async def _run(
@@ -181,5 +190,5 @@ def structured_claude_code(
                 out["data"] = getattr(message, "structured_output", None)
                 out["error"] = bool(getattr(message, "is_error", False))
 
-    anyio.run(_run_structured)
+    anyio.run(_bounded, provider.timeout, _run_structured())
     return (1 if out["error"] else 0), out["data"]

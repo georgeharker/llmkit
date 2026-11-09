@@ -23,7 +23,7 @@ import os
 from typing import Any, Optional
 
 from ..bridge import DEFAULT_ENDPOINT, ChatRequest, _Emitter
-from ..client import resolved_headers
+from ..client import Deadline, resolved_headers
 from ..config import Provider
 
 
@@ -76,6 +76,8 @@ def stream_google(provider: Provider, request: ChatRequest, emitter: _Emitter) -
     headers = resolved_headers(provider)
     if headers:
         http_opts["headers"] = headers
+    if provider.timeout is not None:
+        http_opts["timeout"] = int(provider.timeout * 1000)  # milliseconds
     if http_opts:
         client_kwargs["http_options"] = types.HttpOptions(**http_opts)
     client = genai.Client(**client_kwargs)
@@ -87,9 +89,11 @@ def stream_google(provider: Provider, request: ChatRequest, emitter: _Emitter) -
         thinking_config=_thinking_config(types, provider.enable_thinking),
     )
 
+    deadline = Deadline(provider.timeout)
     for chunk in client.models.generate_content_stream(
         model=provider.model, contents=request.user, config=config
     ):
+        deadline.check()
         emitter.signal_streaming()
         for candidate in getattr(chunk, "candidates", None) or []:
             content = getattr(candidate, "content", None)

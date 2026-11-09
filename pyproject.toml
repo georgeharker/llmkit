@@ -50,3 +50,9 @@ dev = [
     "mypy>=1.10",
     "pytest>=9.2.0",
 ]
+
+# Resolve imports from the project venv (not an activated $VIRTUAL_ENV, which
+# may hold an older installed llmkit and shadow src/).
+[tool.pyright]
+venvPath = "."
+venv = ".venv"

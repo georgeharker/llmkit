@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..client import build_client, enable_thinking_extra
+from ..client import Deadline, build_client, enable_thinking_extra
 from ..config import Provider
 
 # Imported under TYPE_CHECKING-free runtime: bridge imports this lazily, so a
@@ -42,7 +42,9 @@ def stream_openai(provider: Provider, request: ChatRequest, emitter: _Emitter) -
         kwargs.pop("extra_body", None)
     kwargs["stream"] = True
 
+    deadline = Deadline(provider.timeout)
     for chunk in client.chat.completions.create(**kwargs):
+        deadline.check()
         if not chunk.choices:
             continue
         # Fire "streaming" on the FIRST chunk that has choices — even a

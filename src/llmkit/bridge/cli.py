@@ -46,6 +46,14 @@ def _add_common(s: argparse.ArgumentParser) -> None:
         "set (e.g. --header x-opencode-request=zsh-ai for OpenCode Zen).",
     )
     s.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="bound the whole call: connect, each read, and a total deadline "
+        "across the stream (default: the SDK's own, 600 s per read)",
+    )
+    s.add_argument(
         "--adapter",
         choices=["openai-compatible", "claude_code", "anthropic", "google"],
         default=os.environ.get("LLMKIT_ADAPTER", "openai-compatible"),
@@ -85,6 +93,7 @@ def _provider_from_args(args: argparse.Namespace) -> Provider:
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         headers=_parse_headers(args.header),
+        timeout=args.timeout,
     )
 
 

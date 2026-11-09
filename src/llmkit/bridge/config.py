@@ -51,6 +51,7 @@ _PROVIDER_FIELDS = frozenset(
         "enable_thinking",
         "stop",
         "headers",
+        "timeout",
     }
 )
 
@@ -140,6 +141,13 @@ class Provider:
     # OpenCode Zen's ``x-opencode-request``, which its qwen pool requires (absent
     # it, zen 503s ``failover_exhausted``). Merges per-key over ``[defaults]``.
     headers: Mapping[str, str] = field(default_factory=dict)
+    # Seconds. Bounds one call end to end: the HTTP adapters pass it to the SDK
+    # client (connect, and each socket read — so a stalled stream raises) and
+    # also check it as a total deadline between stream chunks (so a slow
+    # trickle is bounded too); claude_code cancels the CLI run when it expires.
+    # A stalled read can overshoot the deadline by up to one more ``timeout``.
+    # ``None`` leaves each SDK's own default (openai/anthropic: 600 s per read).
+    timeout: Optional[float] = None
     # Forward-compat passthrough for unknown [providers.*] keys.
     extra: Mapping[str, "TomlValue"] = field(default_factory=dict)
 
@@ -160,6 +168,7 @@ class Provider:
             enable_thinking=_normalise_thinking(raw.get("enable_thinking")),
             stop=_as_stop(raw.get("stop")),
             headers=_as_headers(raw.get("headers")),
+            timeout=_opt_float(raw.get("timeout")),
             extra=cast("Mapping[str, TomlValue]", extra),
         )
 
