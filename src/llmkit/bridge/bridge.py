@@ -307,24 +307,38 @@ def chat_structured(
     status_file: str = "",
 ) -> tuple[int, Any]:
     """Structured output: for a ``request`` carrying a ``schema``, capture the
-    model's schema-filled JSON and return ``(exit_code, parsed)``. Returns
-    ``(code, None)`` on a non-zero exit or unparseable output — the caller
-    decides whether to fall back. Thinking is off (forced tool-use excludes it)."""
-    import json
+    model's schema-filled JSON and return ``(exit_code, parsed)``. A non-zero
+    code always comes with ``None``, and ``0`` always comes with an object that
+    fits the schema: a reply with no usable JSON is a failure (code 1, reason
+    on stderr), never a silent success. The reply is parsed leniently (see
+    :mod:`llmkit.bridge.structured`) because an openai-compatible server may
+    ignore ``response_format`` and answer in fenced prose. Thinking is off
+    (forced tool-use excludes it)."""
+    from .structured import StructuredOutputError, conform, parse_structured
 
     # claude_code enforces the schema via the SDK's native output_format and returns
     # a parsed object in ResultMessage.structured_output — no text round-trip.
     if provider.adapter == "claude_code":
         from .adapters.claude_code import structured_claude_code
-        return structured_claude_code(with_defaults(provider), request)
+        code, data = structured_claude_code(with_defaults(provider), request)
+        if code != 0:
+            return code, None
+        try:
+            if data is None:
+                raise StructuredOutputError("the CLI returned no structured_output")
+            return 0, conform(data, request.schema)
+        except StructuredOutputError as e:
+            print(f"llmkit: structured output: {e}", file=sys.stderr)
+            return 1, None
 
     code, text = chat_to_str(provider, request, thinking="none", status_file=status_file)
     if code != 0:
         return code, None
     try:
-        return code, json.loads(text)
-    except (ValueError, TypeError):
-        return code, None
+        return 0, parse_structured(text, request.schema)
+    except StructuredOutputError as e:
+        print(f"llmkit: structured output: {e}", file=sys.stderr)
+        return 1, None
 
 
 def complete(

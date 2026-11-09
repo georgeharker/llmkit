@@ -172,9 +172,10 @@ def structured_claude_code(
     """Structured output via the SDK's native ``output_format`` (set in
     ``_build_options`` when the request carries a schema). Runs the single-turn
     query and returns ``(exit_code, structured_output)`` from the ResultMessage —
-    the parsed object matching the schema, or ``(0, None)`` if the model produced
-    none, or ``(1, None)`` on an SDK-reported error. No text parsing: the CLI does
-    the schema enforcement + JSON parse and hands back a Python object."""
+    the parsed object matching the schema, ``(0, None)`` if the model produced
+    none (``chat_structured`` turns that into a failure), or ``(1, None)`` on an
+    SDK-reported error. No text parsing: the CLI does the schema enforcement +
+    JSON parse and hands back a Python object."""
     sdk = _require_sdk()
     import anyio  # bundled with the SDK
 
