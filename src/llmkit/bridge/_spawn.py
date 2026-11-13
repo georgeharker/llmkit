@@ -28,6 +28,7 @@ same process is untouched.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import errno
 import os
@@ -137,6 +138,10 @@ class _AnyioProxy:
 
 
 _transport_cls: Any = None
+# Seconds close() allows the CLI to exit on its own (stdin EOF), and again
+# after SIGTERM, before SIGKILL. A one-turn, tool-free run has no session
+# worth flushing, so this stays short.
+_CLOSE_GRACE = 2.0
 # The SDK transport module's `import anyio` binding.
 _SDK_ANYIO = "anyio"
 
@@ -159,7 +164,8 @@ def _spawn_transport_cls() -> Any:
         setattr(sc, _SDK_ANYIO, _AnyioProxy(real))
 
     class SpawnCLITransport(sc.SubprocessCLITransport):  # type: ignore[misc, name-defined]
-        """The SDK's CLI transport, launching the CLI with posix_spawn."""
+        """The SDK's CLI transport, launching the CLI with posix_spawn, and
+        making sure the CLI is gone once it closes."""
 
         async def connect(self) -> None:
             token = _SPAWNING.set(True)
@@ -167,6 +173,32 @@ def _spawn_transport_cls() -> Any:
                 await super().connect()
             finally:
                 _SPAWNING.reset(token)
+
+        async def close(self) -> None:
+            # On a timeout, close() runs inside the cancelled scope, so the
+            # SDK's own shutdown waits are cancelled at once and a CLI that is
+            # hung (e.g. in startup) is left running. Shield the shutdown, give
+            # the SDK's graceful close a bounded grace, then SIGTERM, then
+            # SIGKILL.
+            import anyio
+
+            proc = self._process
+            with anyio.CancelScope(shield=True):
+                with anyio.move_on_after(_CLOSE_GRACE):
+                    await super().close()
+                if proc is None or proc.returncode is not None:
+                    return
+                with contextlib.suppress(ProcessLookupError):
+                    proc.terminate()
+                with anyio.move_on_after(_CLOSE_GRACE):
+                    await proc.wait()
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                    await proc.wait()
+                # Tidy the SDK's state now the process is gone (its own waits
+                # are skipped for an exited process).
+                await super().close()
 
     _transport_cls = SpawnCLITransport
     return _transport_cls

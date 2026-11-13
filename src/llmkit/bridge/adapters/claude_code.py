@@ -18,6 +18,7 @@ CLI governs those itself. Only ``model``, the request's ``system``, and
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any
 
 from .._spawn import cli_transport
@@ -44,6 +45,35 @@ def _require_sdk() -> Any:
     return sdk
 
 
+# Where an administrator deploys managed-mcp.json (enterprise exclusive control
+# of MCP); see code.claude.com/docs/en/managed-mcp.
+_MANAGED_MCP_PATHS = {
+    "darwin": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+    "linux": "/etc/claude-code/managed-mcp.json",
+    "win32": r"C:\Program Files\ClaudeCode\managed-mcp.json",
+}
+_warned_managed_mcp = False
+
+
+def _strict_mcp_allowed() -> bool:
+    """Whether to pass ``--strict-mcp-config``. Not when an administrator has
+    deployed ``managed-mcp.json``: the CLI then refuses strict mode and exits
+    at startup, so every call would fail. Nothing a user passes can stop
+    those managed servers, so warn once that they will start."""
+    global _warned_managed_mcp
+    path = _MANAGED_MCP_PATHS.get(sys.platform)
+    if path is None or not os.path.exists(path):
+        return True
+    if not _warned_managed_mcp:
+        _warned_managed_mcp = True
+        print(
+            f"llmkit: {path} is deployed, so the claude CLI will start the "
+            "MCP servers it lists (strict MCP mode would make the CLI exit)",
+            file=sys.stderr,
+        )
+    return False
+
+
 def _thinking_budget() -> int:
     """Token budget for ``enable_thinking = true`` → the SDK's
     ``--max-thinking-tokens``. A CAP on extended thinking, not a floor — the
@@ -67,6 +97,14 @@ def _build_options(sdk: Any, provider: Provider, request: ChatRequest) -> Any:
         "permission_mode": "bypassPermissions",
         "include_partial_messages": True,  # token-level streaming deltas
         "setting_sources": [],  # ignore project/user CLAUDE.md, settings, etc.
+        # No MCP servers: a one-turn, tool-free CLI must never start any. If it
+        # starts the host's own server (crib via mcp-combiner, say), the CLI
+        # waits on the host while the host waits on the CLI: a deadlock.
+        # setting_sources=[] already drops ~/.claude.json and .mcp.json
+        # servers; strict mode also drops managed-settings ones, and the env
+        # var drops the claude.ai connectors the CLI fetches itself.
+        "strict_mcp_config": _strict_mcp_allowed(),
+        "env": {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"},
     }
     if provider.model:
         opts["model"] = provider.model
@@ -137,11 +175,17 @@ def stream_claude_code(
 
 async def _bounded(timeout: float | None, coro: Any) -> None:
     """Await ``coro``, cancelling it after ``timeout`` seconds (TimeoutError).
-    Cancellation unwinds the SDK's query, which terminates the CLI."""
+    Cancellation unwinds the SDK's query and closes the transport, which ends
+    the CLI even if it is hung (see ``_spawn.SpawnCLITransport.close``)."""
     import anyio
 
-    with anyio.fail_after(timeout):
-        await coro
+    try:
+        with anyio.fail_after(timeout):
+            await coro
+    except TimeoutError:
+        if timeout is None:  # raised by the SDK itself, not our deadline
+            raise
+        raise TimeoutError(f"no complete response within {timeout:g}s") from None
 
 
 async def _run(
