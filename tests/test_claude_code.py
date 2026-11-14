@@ -68,8 +68,12 @@ def test_timeout_kills_a_hung_cli(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A CLI stuck in startup that ignores SIGTERM: the call times out, and
-    close() escalates to SIGKILL instead of leaving it running."""
-    monkeypatch.setattr(_spawn, "_CLOSE_GRACE", 0.3)
+    close() escalates to SIGKILL instead of leaving it running. The timeout
+    must outlast the SDK's own startup (~1 s on newer SDKs), so the CLI is
+    actually running when it fires."""
+    grace = 0.3
+    timeout = 3.0
+    monkeypatch.setattr(_spawn, "_CLOSE_GRACE", grace)
     pidfile = tmp_path / "pid"
     cli = tmp_path / "claude"
     cli.write_text(
@@ -88,7 +92,7 @@ def test_timeout_kills_a_hung_cli(
 
     t0 = time.monotonic()
     code, _ = chat_to_str(
-        Provider(adapter="claude_code", model="haiku", timeout=0.5),
+        Provider(adapter="claude_code", model="haiku", timeout=timeout),
         ChatRequest(user="hi"),
     )
     elapsed = time.monotonic() - t0
@@ -101,6 +105,7 @@ def test_timeout_kills_a_hung_cli(
     if alive:
         os.kill(pid, signal.SIGKILL)
     assert code == 1
-    assert "no complete response within 0.5s" in capsys.readouterr().err
+    assert f"no complete response within {timeout:g}s" in capsys.readouterr().err
     assert not alive
-    assert elapsed < 3.0
+    # SIGTERM after one grace, SIGKILL after two: not the SDK's own 5 s + 5 s.
+    assert elapsed < timeout + 2 * grace + 1.5

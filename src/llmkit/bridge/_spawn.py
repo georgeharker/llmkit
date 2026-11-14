@@ -175,30 +175,43 @@ def _spawn_transport_cls() -> Any:
                 _SPAWNING.reset(token)
 
         async def close(self) -> None:
-            # On a timeout, close() runs inside the cancelled scope, so the
-            # SDK's own shutdown waits are cancelled at once and a CLI that is
-            # hung (e.g. in startup) is left running. Shield the shutdown, give
-            # the SDK's graceful close a bounded grace, then SIGTERM, then
-            # SIGKILL.
+            # On a timeout, close() runs inside the cancelled scope. Older SDKs
+            # (e.g. 0.2.110) then cancel their own shutdown waits at once and
+            # leave a hung CLI running; newer ones (0.2.180) shield their
+            # close, but wait 5 s graceful + 5 s after SIGTERM. So: shield
+            # the shutdown, and alongside the SDK's close, SIGTERM the CLI
+            # after _CLOSE_GRACE and SIGKILL it after another. Once the
+            # process is gone the SDK's own wait returns, whichever version.
             import anyio
 
             proc = self._process
+
+            async def escalate(p: Any) -> None:
+                await anyio.sleep(_CLOSE_GRACE)
+                if p.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        p.terminate()
+                await anyio.sleep(_CLOSE_GRACE)
+                if p.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        p.kill()
+
             with anyio.CancelScope(shield=True):
-                with anyio.move_on_after(_CLOSE_GRACE):
+                if proc is None:
                     await super().close()
-                if proc is None or proc.returncode is not None:
                     return
-                with contextlib.suppress(ProcessLookupError):
-                    proc.terminate()
-                with anyio.move_on_after(_CLOSE_GRACE):
-                    await proc.wait()
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(escalate, proc)
+                    try:
+                        await super().close()
+                    finally:
+                        tg.cancel_scope.cancel()
+                # An older SDK whose waits gave up early leaves the process
+                # behind; make sure it is reaped.
                 if proc.returncode is None:
                     with contextlib.suppress(ProcessLookupError):
                         proc.kill()
                     await proc.wait()
-                # Tidy the SDK's state now the process is gone (its own waits
-                # are skipped for an exited process).
-                await super().close()
 
     _transport_cls = SpawnCLITransport
     return _transport_cls
