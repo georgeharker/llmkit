@@ -18,6 +18,7 @@ from .bridge import (
     ADAPTERS,
     ChatRequest,
     CompleteRequest,
+    StructuredResult,
     adapter_supports_complete,
     chat,
     chat_structured,
@@ -25,6 +26,7 @@ from .bridge import (
     complete,
     profile_supports_complete,
     provider_supports_complete,
+    structured_result,
     with_defaults,
 )
 from .config import Config, ConfigParser, Provider, TomlValue, load
@@ -42,6 +44,8 @@ __all__ = [
     "chat",
     "chat_to_str",
     "chat_structured",
+    "structured_result",
+    "StructuredResult",
     "complete",
     "with_defaults",
     # adapter capabilities (queryable up front)

@@ -193,17 +193,19 @@ def _run_chat(
     thinking: str,
     status_file: str,
     producer: Producer,
+    errors: list[str] | None = None,
 ) -> int:
     """Own the sink/splitter/status lifecycle and run ``producer`` inside it.
     Shared by every adapter so the failure semantics (status events, exit
-    codes, guaranteed ``splitter.finish()``) are identical."""
+    codes, guaranteed ``splitter.finish()``) are identical. If ``errors`` is
+    given, the failure reason printed to stderr is also appended to it, so an
+    in-process caller can report it (see :func:`structured_result`)."""
     content_sink = open_target(content)
     if content_sink == "inline":
-        print(
-            'llmkit: content sink cannot be "inline" '
-            "(that's a thinking-sink mode only)",
-            file=sys.stderr,
-        )
+        msg = 'content sink cannot be "inline" (that\'s a thinking-sink mode only)'
+        print(f"llmkit: {msg}", file=sys.stderr)
+        if errors is not None:
+            errors.append(msg)
         return 2
     thinking_sink = open_target(thinking)
     splitter = StreamSplitter(content_sink, thinking_sink)
@@ -216,10 +218,14 @@ def _run_chat(
         _write_status(status_fp, "complete")
     except KeyboardInterrupt:
         _write_status(status_fp, "interrupted")
+        if errors is not None:
+            errors.append("interrupted")
         rc = 130
     except Exception as e:
         _write_status(status_fp, "error")
         print(f"llmkit: {e}", file=sys.stderr)
+        if errors is not None:
+            errors.append(str(e))
         rc = 1
     finally:
         # ALWAYS flush — interrupts and exceptions still get the close wrap
@@ -250,6 +256,18 @@ def chat(
 
     Adapter is chosen from ``provider.adapter``. The request's
     ``enable_thinking`` overrides the provider's configured value."""
+    return _chat(provider, request, content, thinking, status_file)
+
+
+def _chat(
+    provider: Provider,
+    request: ChatRequest,
+    content: str | TextIO,
+    thinking: str,
+    status_file: str,
+    errors: list[str] | None = None,
+) -> int:
+    """:func:`chat`, optionally collecting the failure reason into ``errors``."""
     provider = with_defaults(provider)
     eff_thinking = request.enable_thinking or provider.enable_thinking or "auto"
     provider = dataclasses.replace(provider, enable_thinking=eff_thinking)
@@ -273,7 +291,9 @@ def chat(
         from .adapters.openai import stream_openai
 
         producer = stream_openai
-    return _run_chat(provider, request, content, thinking, status_file, producer)
+    return _run_chat(
+        provider, request, content, thinking, status_file, producer, errors
+    )
 
 
 class _StrSink(io.StringIO):
@@ -297,8 +317,30 @@ def chat_to_str(
     :func:`chat` (non-zero code on error); the partial content captured so far is
     still returned."""
     sink = _StrSink()
-    code = chat(provider, request, content=sink, thinking=thinking, status_file=status_file)
+    code = _chat(provider, request, sink, thinking, status_file)
     return code, sink.getvalue()
+
+
+@dataclass
+class StructuredResult:
+    """The outcome of :func:`structured_result`.
+
+    ``code`` is the exit code (``0`` success, ``1`` failure, ``130``
+    interrupted, ``2`` usage error). ``data`` is the schema-conformant object,
+    ``None`` unless ``code == 0``. ``reason`` is the failure text llmkit also
+    prints to stderr (``None`` on success). ``bad_reply`` is ``True`` only when
+    the call completed but the reply had no usable JSON or didn't fit the
+    schema — worth a retry — as opposed to a failed call (auth, endpoint,
+    timeout), which isn't."""
+
+    code: int
+    data: Any = None
+    reason: str | None = None
+    bad_reply: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.code == 0
 
 
 def chat_structured(
@@ -314,32 +356,68 @@ def chat_structured(
     on stderr), never a silent success. The reply is parsed leniently (see
     :mod:`llmkit.bridge.structured`) because an openai-compatible server may
     ignore ``response_format`` and answer in fenced prose. Thinking is off
-    (forced tool-use excludes it)."""
+    (forced tool-use excludes it). Use :func:`structured_result` to get the
+    failure reason back instead of only on stderr."""
+    result = _structured(provider, request, status_file, catch=False)
+    return result.code, result.data
+
+
+def structured_result(
+    provider: Provider,
+    request: ChatRequest,
+    *,
+    status_file: str = "",
+) -> StructuredResult:
+    """:func:`chat_structured`, returning a :class:`StructuredResult` that
+    carries the failure ``reason`` and whether it was a ``bad_reply``. Prints
+    the same stderr lines as :func:`chat_structured`. Never raises for a failed
+    call (an exception from the claude_code adapter becomes ``code=1``);
+    safe to call concurrently from threads."""
+    return _structured(provider, request, status_file, catch=True)
+
+
+def _structured(
+    provider: Provider, request: ChatRequest, status_file: str, *, catch: bool
+) -> StructuredResult:
     from .structured import StructuredOutputError, conform, parse_structured
+
+    def bad(e: StructuredOutputError) -> StructuredResult:
+        print(f"llmkit: structured output: {e}", file=sys.stderr)
+        return StructuredResult(1, None, str(e), bad_reply=True)
 
     # claude_code enforces the schema via the SDK's native output_format and returns
     # a parsed object in ResultMessage.structured_output — no text round-trip.
     if provider.adapter == "claude_code":
         from .adapters.claude_code import structured_claude_code
-        code, data = structured_claude_code(with_defaults(provider), request)
+
+        errors: list[str] = []
+        try:
+            code, data = structured_claude_code(
+                with_defaults(provider), request, errors=errors
+            )
+        except Exception as e:
+            if not catch:
+                raise
+            print(f"llmkit: {e}", file=sys.stderr)
+            return StructuredResult(1, None, str(e))
         if code != 0:
-            return code, None
+            return StructuredResult(code, None, errors[0] if errors else None)
         try:
             if data is None:
                 raise StructuredOutputError("the CLI returned no structured_output")
-            return 0, conform(data, request.schema)
+            return StructuredResult(0, conform(data, request.schema))
         except StructuredOutputError as e:
-            print(f"llmkit: structured output: {e}", file=sys.stderr)
-            return 1, None
+            return bad(e)
 
-    code, text = chat_to_str(provider, request, thinking="none", status_file=status_file)
+    errors = []
+    sink = _StrSink()
+    code = _chat(provider, request, sink, "none", status_file, errors)
     if code != 0:
-        return code, None
+        return StructuredResult(code, None, errors[0] if errors else None)
     try:
-        return 0, parse_structured(text, request.schema)
+        return StructuredResult(0, parse_structured(sink.getvalue(), request.schema))
     except StructuredOutputError as e:
-        print(f"llmkit: structured output: {e}", file=sys.stderr)
-        return 1, None
+        return bad(e)
 
 
 def complete(

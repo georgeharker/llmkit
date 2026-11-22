@@ -96,6 +96,19 @@ The return contract: `(0, data)` where `data` fits the schema, or
 always a failure, never `(0, None)`, so a caller can count failures and back
 off. Thinking is turned off for structured calls.
 
+To get the reason back in-process (stderr is useless to a caller running
+several calls in threads), use `structured_result`, same arguments:
+
+```python
+r = structured_result(provider, request)   # -> StructuredResult
+r.code, r.data      # as chat_structured
+r.reason            # None on success, else the text printed to stderr
+r.bad_reply         # True: the call worked but the reply was unusable (retry may help)
+                    # False: the call itself failed (auth, endpoint, timeout)
+```
+
+It still prints the same stderr lines, and it never raises for a failed call.
+
 Each adapter asks for the schema through its native channel:
 
 | Adapter | Channel |

@@ -252,3 +252,74 @@ def test_conform() -> None:
     # Nothing fits: the error names the most likely candidate's mismatch.
     with pytest.raises(StructuredOutputError, match="missing 'symbols'"):
         parse_structured('{"definitions": []} and [1]', SCHEMA)
+
+
+# ── structured_result: the failure reason comes back, not just on stderr ────
+def _result(content: str) -> Any:
+    from llmkit.bridge import structured_result
+
+    endpoint, _ = _stub(content)
+    return structured_result(
+        Provider(model="m", endpoint=endpoint, timeout=5),
+        ChatRequest(user="describe", schema=SCHEMA, schema_name="describe_symbols"),
+    )
+
+
+def test_result_success() -> None:
+    r = _result(json.dumps({"symbols": SYMBOLS}))
+    assert (r.code, r.data, r.reason, r.bad_reply) == (0, {"symbols": SYMBOLS}, None, False)
+    assert r.ok
+
+
+@pytest.mark.parametrize(
+    ("reply", "reason"),
+    [
+        ("", "empty reply"),
+        ('{"symbols": [{"name": "f", "kind": "k", "keywords": "a"}]}',
+         "symbols[0].keywords: expected array, got str"),
+    ],
+    ids=["empty", "schema-mismatch"],
+)
+def test_result_bad_reply(
+    reply: str, reason: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    r = _result(reply)
+    assert (r.code, r.data, r.bad_reply) == (1, None, True)
+    assert r.reason == reason
+    assert f"llmkit: structured output: {reason}" in capsys.readouterr().err
+
+
+def test_result_failed_call_is_not_a_bad_reply(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A transport failure (nothing listening) carries its exception text."""
+    from llmkit.bridge import structured_result
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    r = structured_result(
+        Provider(model="m", endpoint=f"http://127.0.0.1:{port}/v1", timeout=5),
+        ChatRequest(user="describe", schema=SCHEMA),
+    )
+    assert (r.code, r.data, r.bad_reply) == (1, None, False)
+    assert r.reason
+    assert f"llmkit: {r.reason}" in capsys.readouterr().err
+
+
+def test_result_producer_exception(capsys: pytest.CaptureFixture[str]) -> None:
+    """Whatever the producer raises becomes the reason, verbatim."""
+    from llmkit.bridge import bridge
+
+    def boom(*_: Any) -> None:
+        raise RuntimeError("401 unauthorized")
+
+    errors: list[str] = []
+    sink = bridge._StrSink()
+    code = bridge._run_chat(
+        bridge.with_defaults(Provider(model="m")),
+        ChatRequest(user="x"), sink, "none", "", boom, errors,
+    )
+    assert (code, errors) == (1, ["401 unauthorized"])
+    assert "llmkit: 401 unauthorized" in capsys.readouterr().err

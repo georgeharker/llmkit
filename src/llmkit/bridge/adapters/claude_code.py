@@ -211,7 +211,7 @@ async def _run(
 
 
 def structured_claude_code(
-    provider: Provider, request: ChatRequest
+    provider: Provider, request: ChatRequest, *, errors: list[str] | None = None
 ) -> tuple[int, Any]:
     """Structured output via the SDK's native ``output_format`` (set in
     ``_build_options`` when the request carries a schema). Runs the single-turn
@@ -219,7 +219,8 @@ def structured_claude_code(
     the parsed object matching the schema, ``(0, None)`` if the model produced
     none (``chat_structured`` turns that into a failure), or ``(1, None)`` on an
     SDK-reported error. No text parsing: the CLI does the schema enforcement +
-    JSON parse and hands back a Python object."""
+    JSON parse and hands back a Python object. On an SDK-reported error, the
+    ResultMessage's reason is appended to ``errors`` if given."""
     sdk = _require_sdk()
     import anyio  # bundled with the SDK
 
@@ -234,6 +235,11 @@ def structured_claude_code(
             if isinstance(message, sdk.ResultMessage):
                 out["data"] = getattr(message, "structured_output", None)
                 out["error"] = bool(getattr(message, "is_error", False))
+                out["reason"] = getattr(message, "result", None) or getattr(
+                    message, "subtype", None
+                )
 
     anyio.run(_bounded, provider.timeout, _run_structured())
+    if out["error"] and errors is not None:
+        errors.append(f"claude_code: {out.get('reason') or 'the CLI reported an error'}")
     return (1 if out["error"] else 0), out["data"]
